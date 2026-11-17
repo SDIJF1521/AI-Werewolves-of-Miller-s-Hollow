@@ -196,7 +196,7 @@ class GameRunner:
         await self._begin_phase("night", self.t("night"))
         self.state.log("night", "天黑请闭眼，AI 正在参考密谈与场上发言行动。")
 
-        guard = next((p for p in self.state.players if p.alive and p.role == "guard"), None)
+        guard = next((p for p in self.state.players if p.alive and p.role == "guard" and not self._offline(p.seat)), None)
         guard_target = None
         if guard:
             decision = self.night_decisions.get(guard.seat)
@@ -209,7 +209,7 @@ class GameRunner:
                 if not target or not target.alive:
                     guard_target = None
 
-        seer = next((p for p in self.state.players if p.alive and p.role == "seer"), None)
+        seer = next((p for p in self.state.players if p.alive and p.role == "seer" and not self._offline(p.seat)), None)
         seer_target = None
         if seer:
             decision = self.night_decisions.get(seer.seat)
@@ -229,10 +229,10 @@ class GameRunner:
         wolf_target = self._resolve_wolf_target()
         self.state.wolf_plan = {
             "kill": wolf_target,
-            "vote": self.director.wolf_vote_target(self.state) if self.state.alive_wolves else None,
+            "vote": self.director.wolf_vote_target(self.state) if self._online_wolves() else None,
         }
 
-        witch = next((p for p in self.state.players if p.alive and p.role == "witch"), None)
+        witch = next((p for p in self.state.players if p.alive and p.role == "witch" and not self._offline(p.seat)), None)
         witch_save, witch_poison = (False, None)
         if witch:
             decision = self.night_decisions.get(witch.seat)
@@ -261,8 +261,14 @@ class GameRunner:
         self.state.log("night", "夜晚结算完成。")
         self._record_night_feedback(guard_target, seer_target, wolf_target, witch_save, witch_poison)
 
+    def _offline(self, seat: int) -> bool:
+        return self.room.is_ai_offline(seat)
+
+    def _online_wolves(self):
+        return [p for p in self.state.alive_wolves if not self._offline(p.seat)]
+
     def _resolve_wolf_target(self) -> Optional[int]:
-        wolves = self.state.alive_wolves
+        wolves = self._online_wolves()
         if not wolves:
             return None
         votes: dict[int, float] = {}
@@ -370,6 +376,8 @@ class GameRunner:
         self.round = {}
 
         for p in self.state.alive:
+            if self._offline(p.seat):
+                continue
             team = self.room.teams[p.seat]
             agg = team.final_aggregate
             if agg is None:
@@ -425,6 +433,12 @@ class GameRunner:
         for p in speakers:
             if self.state.winner:
                 return
+            if self._offline(p.seat):
+                self.state.log("speech", f"{p.seat} 号 AI 已离线，跳过发言与 API 调用。", seat=p.seat)
+                await self.notifier.broadcast(
+                    {"type": "speech_skipped", "data": {"seat": p.seat, "name": p.persona.name}}
+                )
+                continue
             await self._begin_phase("speech", self.t("speech"), speaker=p.seat)
             await self.notifier.broadcast(
                 {"type": "ai_thinking", "data": {"seat": p.seat, "name": p.persona.name}}
@@ -510,8 +524,8 @@ class GameRunner:
     # 白天技能
     # ------------------------------------------------------------------
     async def _special_actions(self) -> None:
-        knight = next((p for p in self.state.players if p.alive and p.role == "knight" and not p.duel_used), None)
-        white = next((p for p in self.state.players if p.alive and p.role == "white_wolf_king" and not p.exploded), None)
+        knight = next((p for p in self.state.players if p.alive and p.role == "knight" and not p.duel_used and not self._offline(p.seat)), None)
+        white = next((p for p in self.state.players if p.alive and p.role == "white_wolf_king" and not p.exploded and not self._offline(p.seat)), None)
         if not knight and not white:
             return
 
@@ -573,11 +587,11 @@ class GameRunner:
         await self._begin_phase("vote_reveal", self.t("vote_reveal"))
         self.state.wolf_plan = {
             "kill": self.state.wolf_plan.get("kill") if getattr(self.state, "wolf_plan", None) else None,
-            "vote": self.director.wolf_vote_target(self.state) if self.state.alive_wolves else None,
+            "vote": self.director.wolf_vote_target(self.state) if self._online_wolves() else None,
         }
         votes: dict[int, Optional[int]] = {}
         for p in self.state.alive:
-            if not p.can_vote:
+            if not p.can_vote or self._offline(p.seat):
                 continue
             decision = self.round.get(p.seat) or RoundDecision(
                 p.seat,
@@ -686,7 +700,7 @@ class GameRunner:
             if not death.get("can_revenge"):
                 continue
             p = self.state.by_seat(death["seat"])
-            if not p or p.shot_used or p.role not in ("hunter", "wolf_king"):
+            if not p or self._offline(p.seat) or p.shot_used or p.role not in ("hunter", "wolf_king"):
                 continue
             target = self._council_target(p.seat) or self.director.revenge_target(self.state, p.seat)
             if not target:

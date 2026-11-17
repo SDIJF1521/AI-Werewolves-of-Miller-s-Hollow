@@ -14,7 +14,7 @@ from werewolf.domain.council.strategy import (
     decide_adoption,
 )
 from werewolf.domain.game.entities import NightActions, create_game
-from werewolf.domain.rooms.entities import MAX_LOBBY_VOICE, create_room
+from werewolf.domain.rooms.entities import MAX_LOBBY_VOICE, ModelProfile, create_room
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +182,7 @@ async def test_full_game_completes(variant):
     try:
         container = build_container()
         room = container.service.create(
-            host_name="tester", room_name="test", variant_key=variant, timing="fast"
+            host_name="tester", room_name="test", variant_key=variant, timing="fast", mode="practice"
         )
         host = _seat_nine(room)
         for key in room.timings:
@@ -222,17 +222,22 @@ def test_lobby_rest_flow():
     res = client.post(f"/api/rooms/{code}/team", json={"teamSeat": 1}, headers=headers)
     assert res.status_code == 200, res.text
 
-    res = client.post(f"/api/rooms/{code}/join", json={"name": "军师", "teamSeat": 1})
+    res = client.post(f"/api/rooms/{code}/join", json={"name": "军师A", "teamSeat": 1})
+    assert res.status_code == 200, res.text
+    res = client.post(f"/api/rooms/{code}/join", json={"name": "军师B", "teamSeat": 1})
+    assert res.status_code == 200, res.text
+    res = client.post(f"/api/rooms/{code}/join", json={"name": "军师C", "teamSeat": 1})
     assert res.status_code == 400, res.text
 
-    res = client.post(f"/api/rooms/{code}/join", json={"name": "军师", "teamSeat": 2})
+    res = client.post(f"/api/rooms/{code}/join", json={"name": "军师2", "teamSeat": 2})
     assert res.status_code == 200, res.text
     assert res.json()["member"]["teamSeat"] == 2
 
     room = client.get(f"/api/rooms/{code}").json()["room"]
-    assert room["teams"][0]["advisorCount"] == 1
+    assert room["teams"][0]["advisorCount"] == 3
     assert room["teams"][1]["advisorCount"] == 1
     assert room["teams"][0]["captainId"] == data["playerId"]
+    assert room["maxAdvisors"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +269,7 @@ async def test_key_holder_gets_weight_and_secret_is_masked():
 async def test_project_requires_user_directive():
     container = build_container()
     room = container.service.create(
-        host_name="host", room_name="directive", variant_key="classic9", timing="fast"
+        host_name="host", room_name="directive", variant_key="classic9", timing="fast", mode="practice"
     )
     host = _seat_nine(room)
     room.start_game(create_game("classic9"))
@@ -298,19 +303,34 @@ def test_lobby_voice_has_a_cap():
         room.voice_join(extra)
 
 
-def test_one_player_per_ai_and_minimum_nine_players():
+def test_ai_capacity_and_standard_key_requirements():
     room = create_room(name="strict", host_name="host", variant_key="classic9", timing="fast")
     host = room.members[room.host_id]
     room.assign_team(host, 1)
+    room.join("second", 1)
+    room.join("third", 1)
     with pytest.raises(ValueError):
-        room.join("second", 1)
+        room.join("fourth", 1)
     with pytest.raises(ValueError):
         room.start_game(create_game("classic9"))
     for seat in range(2, 10):
         room.join(f"p{seat}", seat)
+    with pytest.raises(ValueError, match="API Key"):
+        room.start_game(create_game("classic9"))
+    for seat in range(1, 10):
+        member = room.team_members(seat)[0]
+        room.bind_model(
+            member,
+            ModelProfile(
+                provider="openai",
+                base_url="https://api.openai.com/v1",
+                model="gpt-4o-mini",
+                masked_key="sk-***",
+            ),
+        )
     room.start_game(create_game("classic9"))
     assert room.status == "playing"
-    assert sum(1 for seat in room.teams if len(room.team_members(seat)) == 1) == 9
+    assert all(len(room.team_members(seat)) >= 1 for seat in room.teams)
 
 
 def test_practice_mode_can_start_with_one_player():
@@ -322,8 +342,62 @@ def test_practice_mode_can_start_with_one_player():
     assert room.mode == "practice"
 
 
+def test_last_player_timeout_marks_ai_offline():
+    room = create_room(name="offline", host_name="host", variant_key="classic9", timing="fast", mode="practice")
+    host = room.members[room.host_id]
+    room.assign_team(host, 1)
+    room.start_game(create_game("classic9"))
+    result = room.remove_member(host.id)
+    assert result["removed"] is True
+    assert result["offline"] is True
+    assert room.is_ai_offline(1) is True
+    assert room.host_id is None
+
+
+@pytest.mark.asyncio
+async def test_disconnect_grace_allows_reconnect_then_timeout_removes():
+    container = build_container()
+    room = container.service.create(
+        host_name="host", room_name="reconnect", variant_key="classic9", timing="fast", mode="practice"
+    )
+    host = room.members[room.host_id]
+    room.assign_team(host, 1)
+    room.start_game(create_game("classic9"))
+    container.service.DISCONNECT_GRACE_SECONDS = 0.08
+
+    await container.service.presence(room, host, False)
+    assert room.member(host.id).reconnect_deadline is not None
+    await asyncio.sleep(0.02)
+    await container.service.presence(room, host, True)
+    await asyncio.sleep(0.12)
+    assert room.member(host.id) is not None
+    assert room.is_ai_offline(1) is False
+
+    await container.service.presence(room, host, False)
+    await asyncio.sleep(0.12)
+    assert room.member(host.id) is None
+    assert room.is_ai_offline(1) is True
+
+
+def test_team_voice_is_private_and_available_in_all_phases():
+    room = create_room(name="voice", host_name="host", variant_key="classic9", timing="fast", mode="practice")
+    host = room.members[room.host_id]
+    room.assign_team(host, 1)
+    mate = room.join("mate", 1)
+    outsider = room.join("outsider", 2)
+    room.start_game(create_game("classic9"))
+
+    assert room.voice_join(host) == []
+    peers = room.voice_join(mate)
+    assert any(p["memberId"] == host.id for p in peers)
+    assert room.voice_join(outsider) == []
+    assert room.voice_channel_members(host) == {host.id, mate.id}
+    assert outsider.id not in room.voice_channel_members(host)
+    assert room.phase_voice_cleanup() is False
+
+
 def test_night_order_is_validated_and_locked():
-    room = create_room(name="night-order", host_name="host", variant_key="classic9", timing="fast")
+    room = create_room(name="night-order", host_name="host", variant_key="classic9", timing="fast", mode="practice")
     host = _seat_nine(room)
     game = create_game("classic9")
     room.start_game(game)

@@ -5,7 +5,7 @@
     :class="{
       'team-card--selected': selected,
       'team-card--mine': mine,
-      'team-card--full': team.advisorCount >= 1,
+      'team-card--full': team.advisorCount >= 3,
     }"
     @click="$emit('select', team.seat)"
   >
@@ -24,17 +24,23 @@
       </div>
     </div>
     <div class="team-card__slots">
-      <span class="team-card__slot" :class="{ 'is-filled': team.members[0] }">
-        <template v-if="team.members[0]">
-          {{ team.members[0].name }}
-          <i v-if="team.members[0].hasKey">KEY</i>
+      <span
+        v-for="index in 3"
+        :key="index"
+        class="team-card__slot"
+        :class="{ 'is-filled': team.members[index - 1] }"
+      >
+        <template v-if="team.members[index - 1]">
+          {{ team.members[index - 1].name }}
+          <i v-if="team.members[index - 1].hasKey">KEY</i>
         </template>
         <template v-else>等待玩家</template>
       </span>
     </div>
     <div class="team-card__foot">
-      <span>{{ team.advisorCount }}/1 玩家</span>
-      <span v-if="team.advisorCount" class="team-card__captain">已就位</span>
+      <span>{{ team.advisorCount }}/3 玩家</span>
+      <span v-if="team.advisorCount >= 3" class="team-card__captain">已满</span>
+      <span v-else-if="team.advisorCount" class="team-card__captain">可加入</span>
       <span v-else class="muted">空缺</span>
     </div>
   </button>

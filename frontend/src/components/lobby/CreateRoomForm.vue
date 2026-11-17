@@ -34,8 +34,8 @@
           :class="{ 'timing__item--active': mode === 'multiplayer' }"
           @click="mode = 'multiplayer'"
         >
-          <strong>标准局 · 至少 9 人</strong>
-          <small>一人控制一个 AI</small>
+          <strong>标准局 · 全员 + Key</strong>
+          <small>每个 AI 1–3 名玩家</small>
         </button>
       </div>
     </div>
@@ -63,7 +63,7 @@
     <p class="create-form__note">
       {{ mode === 'practice'
         ? '训练局会由 AI 自动补位，1 人即可开完整对局；适合先熟悉流程或单人体验。'
-        : '标准局一人一个 AI，至少 9 名真人才能开局；12 人板允许 9–12 人，剩余 AI 自主行动。' }}
+        : '标准局每个 AI 需要 1–3 名真人，且每个 AI 至少 1 名玩家配置 API Key 才能开局。' }}
     </p>
   </form>
 </template>

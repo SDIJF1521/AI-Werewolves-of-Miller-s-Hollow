@@ -8,7 +8,7 @@
           <div class="lobby__meta">
             <span class="chip chip--gold">{{ room.variant.name }}</span>
             <span class="chip">{{ room.variant.subtitle }}</span>
-            <span class="chip" :class="isPractice ? 'chip--green' : ''">{{ isPractice ? '训练局 · AI 补位' : '标准局 · 至少 9 人' }}</span>
+            <span class="chip" :class="isPractice ? 'chip--green' : ''">{{ isPractice ? '训练局 · AI 补位' : `标准局 · 至少 ${minPlayers} 人` }}</span>
             <span class="chip">{{ room.timing === 'fast' ? '快速局' : '标准局' }}</span>
             <span class="chip">房间 <b class="lobby__code">{{ room.code }}</b></span>
           </div>
@@ -16,7 +16,7 @@
         <div class="lobby__header-actions">
           <el-button class="btn-ghost" size="small" @click="copyInvite">复制邀请</el-button>
           <el-button v-if="you.isHost" class="btn-gold" size="small" :loading="starting" :disabled="!canStart" @click="$emit('start')">
-            {{ canStart ? '开始对局' : `还需 ${missingPlayers} 名玩家` }}
+            {{ startLabel }}
           </el-button>
         </div>
       </header>
@@ -25,7 +25,7 @@
         <span class="lobby__hint-dot"></span>
         {{ isPractice
           ? '训练局：未认领的 AI 会自动补位，1 名玩家即可开完整对局。'
-          : '标准局：一名玩家只能控制 1 个 AI，至少 9 名玩家才能开局。' }}
+          : '标准局：每个 AI 需要 1–3 名玩家，且该 AI 至少有 1 名玩家配置 API Key 才能开局。' }}
       </div>
 
       <div class="lobby__grid">
@@ -55,7 +55,7 @@
             <AvatarOrb :avatar="selectedTeam.ai.avatar" :color="selectedTeam.ai.color" :size="54" />
             <div>
               <strong>{{ selectedTeam.ai.title }}</strong>
-              <span>{{ selectedTeam.advisorCount }} / 1 名玩家 · {{ selectedTeam.hasKey ? '已接入 LLM' : '本地演示脑' }}</span>
+              <span>{{ selectedTeam.advisorCount }} / 3 名玩家 · {{ selectedTeam.hasKey ? '已接入 LLM' : '本地演示脑' }}</span>
             </div>
           </div>
 
@@ -65,10 +65,13 @@
                 <span class="lobby__member-dot" :class="{ 'is-you': member.id === you.id }"></span>
                 <span>{{ member.name }}</span>
                 <i v-if="member.hasKey">KEY</i>
+                <i v-if="!member.connected" class="is-offline">离线</i>
               </div>
-              <span class="lobby__weight">{{ member.hasKey ? 'LLM' : '玩家' }}</span>
+              <span class="lobby__weight">{{ member.weight?.toFixed(1) }}× {{ member.hasKey ? 'LLM' : '玩家' }}</span>
             </div>
-            <div v-if="!selectedTeam.members.length" class="lobby__empty">还没有玩家，AI 会自主行动。</div>
+            <div v-if="!selectedTeam.members.length" class="lobby__empty">
+              {{ isPractice ? '还没有玩家，AI 会自主补位。' : '还没有玩家；标准局每个 AI 至少需要 1 名玩家。' }}
+            </div>
           </div>
 
           <div class="lobby__key-line" v-if="selectedTeam.hasKey">
@@ -81,10 +84,10 @@
             <el-button
               v-if="you.teamSeat !== selectedTeam.seat"
               class="btn-gold"
-              :disabled="selectedTeam.advisorCount >= 1"
+              :disabled="selectedTeam.advisorCount >= 3"
               @click="$emit('assign', selectedTeam.seat)"
             >
-              {{ selectedTeam.advisorCount >= 1 ? '该 AI 已有玩家' : '控制这个 AI' }}
+              {{ selectedTeam.advisorCount >= 3 ? '该 AI 的智囊团已满' : '加入这个 AI 的智囊团' }}
             </el-button>
             <template v-else>
               <el-button class="btn-ghost" @click="$emit('open-key', selectedTeam.seat)">配置 API Key</el-button>
@@ -97,7 +100,7 @@
 
         <div v-else class="lobby__empty-state">
           <span>🎭</span>
-          <p>点击左侧任意 AI，查看它的性格与当前玩家；每个 AI 只能由 1 名玩家控制。</p>
+          <p>点击左侧任意 AI，查看它的性格与当前智囊团；每个 AI 可容纳 1–3 名玩家。</p>
         </div>
       </section>
 
@@ -109,10 +112,11 @@
           </div>
         </div>
         <ul class="lobby__facts">
-          <li><span>玩家配置</span><strong>1 人控制 1 个 AI</strong></li>
+          <li><span>玩家配置</span><strong>每个 AI 1–3 名玩家</strong></li>
           <li><span>模式</span><strong>{{ isPractice ? '训练局（AI 补位）' : '标准局' }}</strong></li>
-          <li><span>开局门槛</span><strong>{{ isPractice ? '至少 1 人' : `至少 ${minPlayers} 人` }}</strong></li>
-          <li><span>已就位</span><strong>{{ room.staffedTeams }} / {{ room.playerCount }} 名玩家</strong></li>
+          <li><span>开局门槛</span><strong>{{ isPractice ? '至少 1 人' : `每个 AI 至少 1 人 + 1 个 Key` }}</strong></li>
+          <li><span>已就位</span><strong>{{ room.staffedTeams }} / {{ room.playerCount }} 个 AI 有玩家</strong></li>
+          <li><span>API Key</span><strong>{{ keyedTeams }} / {{ room.playerCount }} 个 AI 已配置</strong></li>
           <li><span>在线成员</span><strong>{{ room.memberCount }} 人</strong></li>
           <li><span>观战</span><strong>{{ room.spectatorCount }} 人</strong></li>
           <li><span>语音</span><strong>候场大厅 / 开局队内</strong></li>
@@ -123,13 +127,13 @@
             {{ canStart
               ? (isPractice
                   ? `可以开局。${room.playerCount - room.staffedTeams} 个 AI 将由系统补位。`
-                  : `已满足 ${minPlayers} 人开局条件。${room.staffedTeams < room.playerCount ? `剩余 ${room.playerCount - room.staffedTeams} 个 AI 将自主行动。` : '所有 AI 都有玩家。'}`)
-              : `还需 ${missingPlayers} 名玩家才能开始。` }}
+                  : '所有 AI 都有玩家且至少配置了一个 Key，可以开局。')
+              : startGateHint }}
           </span>
-          <span v-else>等待房主开始。{{ isPractice ? '训练局 AI 会自动补位。' : '每名玩家只能控制一个 AI。' }}</span>
+          <span v-else>等待房主开始。{{ isPractice ? '训练局 AI 会自动补位。' : '标准局每个 AI 需要 1–3 名玩家，并至少配置一个 API Key。' }}</span>
         </div>
         <el-button v-if="you.isHost" class="btn-gold lobby__start" :loading="starting" :disabled="!canStart" @click="$emit('start')">
-          {{ canStart ? '开始对局' : `还需 ${missingPlayers} 名玩家` }}
+          {{ startLabel }}
         </el-button>
         <div class="lobby__invite" @click="copyInvite">
           <span>邀请链接</span>
@@ -183,10 +187,26 @@ const emit = defineEmits(['assign', 'start', 'open-key', 'lobby-chat'])
 const selectedSeat = ref(props.you.teamSeat || props.room.teams?.[0]?.seat || 1)
 const selectedTeam = computed(() => props.room.teams?.find((t) => t.seat === selectedSeat.value) || null)
 const inviteLink = computed(() => `${window.location.origin}${window.location.pathname}#/room/${props.room.code}`)
-const minPlayers = computed(() => (props.room.mode === 'practice' ? 1 : props.room.minPlayers || 9))
+const minPlayers = computed(() => (props.room.mode === 'practice' ? 1 : props.room.playerCount || 9))
 const isPractice = computed(() => props.room.mode === 'practice')
-const canStart = computed(() => (props.room.staffedTeams || 0) >= minPlayers.value)
-const missingPlayers = computed(() => Math.max(0, minPlayers.value - (props.room.staffedTeams || 0)))
+const keyedTeams = computed(() => props.room.keyedTeams || 0)
+const missingTeams = computed(() => Math.max(0, (props.room.playerCount || 9) - (props.room.staffedTeams || 0)))
+const missingKeys = computed(() => Math.max(0, (props.room.playerCount || 9) - keyedTeams.value))
+const canStart = computed(() => {
+  if (isPractice.value) return (props.room.staffedTeams || 0) >= 1
+  return missingTeams.value === 0 && missingKeys.value === 0
+})
+const startLabel = computed(() => {
+  if (canStart.value) return '开始对局'
+  if (isPractice.value) return '还需 1 名玩家'
+  if (missingTeams.value > 0) return `还需 ${missingTeams.value} 个 AI 玩家`
+  return `还需 ${missingKeys.value} 个 API Key`
+})
+const startGateHint = computed(() => {
+  if (isPractice.value) return '至少需要 1 名玩家。'
+  if (missingTeams.value > 0) return `还有 ${missingTeams.value} 个 AI 没有玩家；每个 AI 至少需要 1 名玩家。`
+  return `还有 ${missingKeys.value} 个 AI 没有配置 API Key；每个 AI 至少要有 1 名玩家配置 Key。`
+})
 
 watch(
   () => props.you.teamSeat,
@@ -361,6 +381,10 @@ async function copyInvite() {
 .lobby__member-name i.is-key {
   color: #a8d6c4;
   border-color: rgba(79, 155, 130, 0.3);
+}
+.lobby__member-name i.is-offline {
+  color: #e1a49b;
+  border-color: rgba(190, 90, 75, 0.35);
 }
 .lobby__weight {
   font-family: var(--serif);

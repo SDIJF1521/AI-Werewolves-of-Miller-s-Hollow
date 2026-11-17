@@ -25,7 +25,7 @@ from ..shared.time import new_id, new_room_code, new_token, now_ms
 
 MAX_LOBBY_VOICE = 8
 MIN_PLAYERS = 9
-MAX_PLAYERS_PER_AI = 1
+MAX_PLAYERS_PER_AI = 3
 
 
 @dataclass(frozen=True)
@@ -60,6 +60,8 @@ class Member:
     is_host: bool = False
     joined_at: int = field(default_factory=now_ms)
     connected: bool = False
+    disconnected_at: Optional[int] = None
+    reconnect_deadline: Optional[int] = None
     voice_muted: bool = False
     voice_speaking: bool = False
     last_chat_at: float = 0.0
@@ -85,6 +87,7 @@ class TeamState:
     voice: set[str] = field(default_factory=set)
     final_aggregate: Optional[AggregatedStrategy] = None
     public_adoption: Optional[Adoption] = None
+    managed: bool = False
 
     @property
     def has_key(self) -> bool:
@@ -122,6 +125,7 @@ class Room:
         self.lobby_voice: set[str] = set()
         self.wolf_voice: set[str] = set()
         self.lobby_chat: list[dict] = []
+        self.offline_ai: set[int] = set()
 
         variant = get_variant(variant_key)
         for seat in range(1, variant.player_count + 1):
@@ -170,6 +174,79 @@ class Room:
     def team_member_ids(self, seat: int) -> set[str]:
         return {m.id for m in self.team_members(seat)}
 
+    def is_ai_offline(self, seat: int) -> bool:
+        return seat in self.offline_ai
+
+    def mark_ai_offline(self, seat: int) -> None:
+        if seat in self.teams:
+            self.offline_ai.add(seat)
+            team = self.teams[seat]
+            team.night_locked = True
+            team.advice.clear()
+            team.locked = True
+
+    def mark_disconnected(self, member: Member, *, grace_ms: int, now: Optional[int] = None) -> None:
+        current = now if now is not None else now_ms()
+        member.connected = False
+        member.disconnected_at = current
+        member.reconnect_deadline = current + grace_ms
+
+    def mark_reconnected(self, member: Member) -> None:
+        member.connected = True
+        member.disconnected_at = None
+        member.reconnect_deadline = None
+
+    def remove_member(self, member_id: str) -> dict:
+        """超时移除玩家。
+
+        返回 seat / keyCleared / offline，供 application 清理 Key 与广播。
+        """
+        member = self.members.get(member_id)
+        if not member:
+            return {"removed": False, "seat": None, "keyCleared": False, "offline": False}
+        seat = member.team_seat
+        was_host = member.is_host
+        key_cleared = False
+        offline = False
+
+        if seat is not None and seat in self.teams:
+            team = self.teams[seat]
+            team.packages.pop(member.id, None)
+            team.advice.pop(member.id, None)
+            team.voice.discard(member.id)
+            if team.key_holder_id == member.id:
+                team.key_profile = None
+                team.key_holder_id = None
+                key_cleared = True
+            if team.captain_id == member.id:
+                team.captain_id = None
+
+        self.lobby_voice.discard(member.id)
+        self.wolf_voice.discard(member.id)
+        del self.members[member_id]
+
+        if seat is not None and seat in self.teams:
+            team = self.teams[seat]
+            self.auto_captain(team)
+            if not self.team_members(seat) and team.managed and self.status == "playing":
+                self.mark_ai_offline(seat)
+                offline = True
+
+        if was_host:
+            remaining = sorted(self.members.values(), key=lambda m: m.joined_at)
+            if remaining:
+                self.host_id = remaining[0].id
+                remaining[0].is_host = True
+            else:
+                self.host_id = None
+        return {
+            "removed": True,
+            "member": member,
+            "seat": seat,
+            "keyCleared": key_cleared,
+            "offline": offline,
+        }
+
     def member_weight(self, member: Member) -> float:
         weight = 1.0
         team = self.teams.get(member.team_seat or 0)
@@ -216,7 +293,7 @@ class Room:
         if seat not in self.teams:
             raise ValueError("无效的 AI 座位")
         if len(self.team_members(seat)) >= MAX_PLAYERS_PER_AI:
-            raise ValueError(f"{seat} 号 AI 已经有玩家了，一名玩家只能控制一个 AI")
+            raise ValueError(f"{seat} 号 AI 的智囊团已满（最多 {MAX_PLAYERS_PER_AI} 人）")
 
     def join(self, name: str, team_seat: Optional[int] = None, spectator: bool = False) -> Member:
         if len(self.members) >= 48:
@@ -307,22 +384,33 @@ class Room:
         if self.status != "lobby":
             raise ValueError("对局已经开始了")
         players = sum(1 for seat in self.teams if self.team_members(seat))
-        required = 1 if self.mode == "practice" else MIN_PLAYERS
-        if players < required:
-            if self.mode == "practice":
+        if self.mode == "practice":
+            if players < 1:
                 raise ValueError("训练局至少需要 1 名玩家才能开局")
-            raise ValueError(f"至少需要 {MIN_PLAYERS} 名玩家才能开局，当前 {players} 人")
-        if self.mode == "practice" and players > self.variant.player_count:
-            raise ValueError("训练局玩家数超过 AI 座位数")
+            if players > self.variant.player_count:
+                raise ValueError("训练局玩家数超过 AI 座位数")
+        else:
+            if players < MIN_PLAYERS:
+                raise ValueError(f"至少需要 {MIN_PLAYERS} 名玩家才能开局，当前 {players} 人")
+            empty_seats = [seat for seat in self.teams if not self.team_members(seat)]
+            if empty_seats:
+                seats = "、".join(f"{seat}号" for seat in empty_seats[:4])
+                raise ValueError(f"标准局要求每个 AI 至少有 1 名玩家；{seats} AI 还没有玩家")
+            missing_keys = [seat for seat, team in self.teams.items() if not team.has_key]
+            if missing_keys:
+                seats = "、".join(f"{seat}号" for seat in missing_keys[:4])
+                raise ValueError(f"标准局要求每个 AI 至少有 1 名玩家配置 API Key；{seats} AI 还没有配置")
         if any(len(self.team_members(seat)) > MAX_PLAYERS_PER_AI for seat in self.teams):
-            raise ValueError("每个 AI 只能绑定 1 名玩家")
+            raise ValueError(f"每个 AI 最多绑定 {MAX_PLAYERS_PER_AI} 名玩家")
         if game.variant.key != self.variant_key:
             raise ValueError("板子不匹配")
         if len(game.players) != self.variant.player_count:
             raise ValueError("玩家人数不匹配")
         self.game = game
         self.status = "playing"
+        self.offline_ai.clear()
         for seat, team in self.teams.items():
+            team.managed = bool(self.team_members(seat))
             p = game.by_seat(seat)
             if p:
                 p.key_holder = team.key_holder_id in self.team_member_ids(seat)
@@ -351,10 +439,14 @@ class Room:
     def voice_allowed(self, member: Member) -> bool:
         if self.status == "lobby":
             return True
-        if not member.team_seat or not self.game:
-            return False
-        p = self.game.by_seat(member.team_seat)
-        return bool(p and p.alive and p.camp == "wolf" and self.game.phase == "night_council")
+        return bool(member.team_seat and self.game)
+
+    def _voice_channel(self, member: Member) -> set[str]:
+        if self.status == "lobby":
+            return self.lobby_voice
+        if not member.team_seat or member.team_seat not in self.teams:
+            return set()
+        return self.teams[member.team_seat].voice
 
     def _valid_target(self, seat: Optional[int], *, allow_self: Optional[int] = None) -> Optional[int]:
         if seat is None:
@@ -659,10 +751,10 @@ class Room:
                 "name": self.members[mid].name if mid in self.members else "",
                 "muted": self.members[mid].voice_muted if mid in self.members else False,
             }
-            for mid in self.wolf_voice
+            for mid in self.teams[member.team_seat].voice
             if mid != member.id and mid in self.members
         ]
-        self.wolf_voice.add(member.id)
+        self.teams[member.team_seat].voice.add(member.id)
         member.voice_muted = False
         return peers
 
@@ -674,9 +766,7 @@ class Room:
         member.voice_speaking = False
 
     def voice_channel_members(self, member: Member) -> set[str]:
-        if self.status == "lobby":
-            return self.lobby_voice
-        return self.wolf_voice
+        return self._voice_channel(member)
 
     def lobby_voice_members(self) -> list[dict]:
         out = []
@@ -719,14 +809,8 @@ class Room:
                 )
 
     def phase_voice_cleanup(self) -> bool:
-        if self.status == "lobby":
-            return False
-        if self.game and self.game.phase in ("night_council", "council", "vote_advice"):
-            return False
-        changed = any(team.voice for team in self.teams.values()) or bool(self.wolf_voice)
-        if changed:
-            self.close_all_voice("发言阶段，语音密聊已自动关闭。")
-        return changed
+        # 同一 AI 的军师语音不受阶段限制，只有开局时的大厅语音会关闭。
+        return False
 
 
 def create_room(

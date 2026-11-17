@@ -7,7 +7,7 @@
       </div>
       <div class="strategy__state">
         <span v-if="team.locked" class="chip chip--green">已锁定</span>
-        <span v-else-if="isCaptain" class="chip chip--gold">你是唯一玩家</span>
+        <span v-else-if="isCaptain" class="chip chip--gold">你是队长</span>
         <span v-else class="chip">建议中</span>
       </div>
     </div>

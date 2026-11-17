@@ -25,7 +25,7 @@
             你不再替 AI 写发言稿。你只有 80 秒，把一条策略递进一个有性格、会撒谎、也可能抗命的 AI 脑子里。
           </p>
           <p class="hero__sub">
-            一名玩家控制一个 AI。标准局至少 9 人；想先自己玩，可以开训练局让 AI 补位。
+            每个 AI 由 1–3 名玩家共同指挥。标准局每个 AI 至少 1 名玩家、且至少 1 人配置 API Key；想先自己玩，可以开训练局。
           </p>
           <div class="hero__actions">
             <el-button class="btn-gold" size="large" @click="scrollTo('start')">创建牌局</el-button>
@@ -33,7 +33,7 @@
           </div>
           <div class="hero__stats">
             <div><strong class="serif">80<small>s</small></strong><span>并行密聊</span></div>
-            <div><strong class="serif">1<small>人</small></strong><span>控制一个 AI</span></div>
+            <div><strong class="serif">1–3<small>人</small></strong><span>每个 AI</span></div>
             <div><strong class="serif">9<small>+</small></strong><span>标准局玩家</span></div>
           </div>
         </div>
@@ -117,7 +117,7 @@
             <div class="eyebrow">FORMATS</div>
             <h2 class="serif">9 人起步，12 人三种玩法</h2>
           </div>
-          <p>固定 AI 阵容，真人玩家一人认领一个 AI。12 人局至少三种板子，技能与胜负条件各不相同。</p>
+          <p>固定 AI 阵容，真人玩家 1–3 人组成一个 AI 的智囊团。12 人局至少三种板子，技能与胜负条件各不相同。</p>
         </div>
         <div class="variants__grid">
           <article v-for="variant in displayVariants" :key="variant.key" class="variant-card">
@@ -159,12 +159,12 @@
         <div class="start__intro">
           <div class="eyebrow">TAKE A SEAT</div>
           <h2 class="serif">今晚，谁来当幕后？</h2>
-          <p>创建牌局成为房主，或输入房间号加入朋友的牌局。标准局一人一个 AI、至少 9 人；单人可直接开训练局，AI 自动补位。</p>
+          <p>创建牌局成为房主，或输入房间号加入朋友的牌局。标准局每个 AI 1–3 名玩家、至少 1 个 API Key；单人可直接开训练局。</p>
           <ul class="start__bullets">
             <li><span>01</span> 房主选板子、开房间，分享 5 位房间号</li>
-            <li><span>02</span> 每人选一个 AI 辅佐，最多 3 人一队</li>
-            <li><span>03</span> 标准局至少 9 人；训练局 AI 补位可单开</li>
-            <li><span>04</span> 没有 Key 也能玩：本地演示脑完整参战</li>
+            <li><span>02</span> 每个 AI 1–3 名玩家，共同提交策略</li>
+            <li><span>03</span> 标准局每个 AI 至少 1 名玩家 + 1 个 Key；训练局可单开</li>
+            <li><span>04</span> 训练局可用本地脑；标准局必须配置 Key</li>
           </ul>
         </div>
         <div class="start__panels">

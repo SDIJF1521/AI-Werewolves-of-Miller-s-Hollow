@@ -38,7 +38,7 @@
     </div>
     <div class="chat__hint">
       <span>Enter 发送</span>
-      <span>一人控制一个 AI · 密聊指令直达</span>
+      <span>智囊团 1–3 人 · 密聊指令直达</span>
     </div>
   </div>
 </template>

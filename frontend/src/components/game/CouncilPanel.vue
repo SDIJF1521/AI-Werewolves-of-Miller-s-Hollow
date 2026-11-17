@@ -40,7 +40,7 @@
         <div class="council__tags">
           <span v-if="privateInfo?.you?.camp === 'wolf'" class="chip chip--red">狼人阵营</span>
           <span v-else class="chip chip--green">好人阵营</span>
-          <span class="chip">{{ team.members.length }}/1 玩家</span>
+          <span class="chip">{{ team.members.length }}/3 玩家</span>
           <span v-if="team.key?.hasKey" class="chip chip--gold">{{ team.key.model }}</span>
           <span v-else class="chip">演示脑</span>
         </div>
@@ -58,9 +58,9 @@
       </header>
 
       <div class="council__voice">
-        <VoicePanel v-if="isWolf" :allowed="voiceAllowed" mode="wolf" compact />
+        <VoicePanel v-if="you.teamSeat" :allowed="voiceAllowed" mode="team" compact />
         <div v-else class="council__voice-note">
-          本局一人控制一个 AI；白天没有人类语音频道。狼人玩家可在夜间密谈使用狼队语音。
+          加入一个 AI 的智囊团后，可随时和同一 AI 的 1–3 名军师连麦；其他 AI 听不到。
         </div>
       </div>
 
@@ -143,12 +143,13 @@
         <template v-else-if="activeTab === 'intel'">
           <BoardSummary :game="game" />
           <div class="council__section">
-            <div class="council__section-head"><span>本队玩家</span><small>一名玩家控制一个 AI</small></div>
+            <div class="council__section-head"><span>本队智囊团</span><small>1–3 名玩家 · Key 持有者权重 ×2</small></div>
             <div class="council__weights">
               <div v-for="member in team.members" :key="member.id" class="council__weight">
                 <span>{{ member.name }}</span>
                 <i v-if="member.hasKey" class="is-key">KEY</i>
-                <strong>{{ member.hasKey ? 'LLM' : '演示' }}</strong>
+                <i v-if="!member.connected" class="is-offline">离线</i>
+                <strong>{{ member.weight?.toFixed(1) }}× · {{ member.hasKey ? 'LLM' : '玩家' }}</strong>
               </div>
             </div>
           </div>
@@ -239,8 +240,7 @@ const tabs = [
 
 const ai = computed(() => props.room.teams.find((t) => t.seat === props.you.teamSeat)?.ai || { name: 'AI', avatar: '🐺', title: '', color: '#8a9b6e' })
 const chatAllowed = computed(() => ['night_council', 'council', 'vote_advice'].includes(props.game?.phase))
-const isWolf = computed(() => props.privateInfo?.you?.camp === 'wolf')
-const voiceAllowed = computed(() => isWolf.value && props.game?.phase === 'night_council')
+const voiceAllowed = computed(() => Boolean(props.you.teamSeat && props.game))
 const aiStatusLabel = computed(() => {
   const mode = props.privateInfo?.aiStatus?.mode
   if (mode === 'llm') return 'LLM 在线'
@@ -571,6 +571,9 @@ watch(
 }
 .council__weight i.is-key {
   color: #9ed4c1;
+}
+.council__weight i.is-offline {
+  color: #e1a49b;
 }
 .council__weight strong {
   margin-left: auto;

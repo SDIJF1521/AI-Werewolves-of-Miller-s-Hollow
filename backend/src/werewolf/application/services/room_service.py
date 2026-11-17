@@ -30,6 +30,8 @@ class GameSession:
 
 
 class RoomService:
+    DISCONNECT_GRACE_SECONDS = 60.0
+
     def __init__(
         self,
         rooms: RoomRepository,
@@ -43,6 +45,7 @@ class RoomService:
         self.ai_factory = ai_factory
         self.sessions: dict[str, GameSession] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        self._disconnect_tasks: dict[tuple[str, str], asyncio.Task] = {}
 
     # ------------------------------------------------------------------
     # 查询
@@ -91,15 +94,72 @@ class RoomService:
         await self.notifier_for(room).snapshot()
 
     async def presence(self, room: Room, member: Member, connected: bool) -> None:
-        member.connected = connected
+        key = (room.code, member.id)
+        if connected:
+            self._cancel_disconnect(key)
+            room.mark_reconnected(member)
+        else:
+            room.mark_disconnected(member, grace_ms=int(self.DISCONNECT_GRACE_SECONDS * 1000))
+            self._schedule_disconnect(room, member)
         await self.realtime.broadcast(
             room.code,
             {
                 "type": "presence",
-                "data": {"memberId": member.id, "name": member.name, "connected": connected},
+                "data": {
+                    "memberId": member.id,
+                    "name": member.name,
+                    "connected": connected,
+                    "reconnectDeadline": member.reconnect_deadline,
+                },
             },
         )
         await self.broadcast_snapshot(room)
+
+    def _cancel_disconnect(self, key: tuple[str, str]) -> None:
+        task = self._disconnect_tasks.pop(key, None)
+        if task and not task.done():
+            task.cancel()
+
+    def _schedule_disconnect(self, room: Room, member: Member) -> None:
+        key = (room.code, member.id)
+        self._cancel_disconnect(key)
+
+        async def expire() -> None:
+            try:
+                await asyncio.sleep(self.DISCONNECT_GRACE_SECONDS)
+                current = self.rooms.get(room.code)
+                current_member = current.member(member.id) if current else None
+                if not current or not current_member or current_member.connected:
+                    return
+                removed = current.remove_member(member.id)
+                if not removed.get("removed"):
+                    return
+                seat = removed.get("seat")
+                if removed.get("keyCleared") and seat:
+                    self.vault.delete(current.code, seat)
+                await self.realtime.broadcast(
+                    current.code,
+                    {
+                        "type": "member_removed",
+                        "data": {
+                            "memberId": member.id,
+                            "name": member.name,
+                            "seat": seat,
+                            "reason": "reconnect_timeout",
+                        },
+                    },
+                )
+                if removed.get("offline") and seat:
+                    await self.realtime.broadcast(
+                        current.code,
+                        {"type": "ai_offline", "data": {"seat": seat}},
+                    )
+                await self.broadcast_snapshot(current)
+            finally:
+                if self._disconnect_tasks.get(key) is asyncio.current_task():
+                    self._disconnect_tasks.pop(key, None)
+
+        self._disconnect_tasks[key] = asyncio.create_task(expire())
 
     # ------------------------------------------------------------------
     # 大厅用例
@@ -170,10 +230,10 @@ class RoomService:
             runner = GameRunner(room, game, director, notifier)
             session = GameSession(runner=runner, director=director, notifier=notifier)
             self.sessions[room.code] = session
-            room.close_all_voice("对局开始，语音已收起；密聊阶段再开。")
+            room.close_all_voice("对局开始，大厅语音已关闭；现在可以加入各自 AI 的小队语音。")
             await self.realtime.broadcast(
                 room.code,
-                {"type": "voice_closed", "reason": "对局开始，语音已切换为各 AI 的队内频道"},
+                {"type": "voice_closed", "reason": "大厅语音已关闭；可加入各自 AI 的小队语音"},
             )
             await notifier.snapshot()
             session.task = asyncio.create_task(runner.run(), name=f"game-{room.code}")

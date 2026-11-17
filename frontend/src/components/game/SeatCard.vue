@@ -6,6 +6,7 @@
       'seat--dead': !player.alive,
       'seat--mine': mine,
       'seat--revealed': reveal,
+      'seat--offline': team?.offline,
     }"
   >
     <span class="seat__number">{{ String(player.seat).padStart(2, '0') }}</span>
@@ -28,6 +29,7 @@
       <span v-if="voteCount" class="seat__vote">{{ voteCount }} 票</span>
       <span v-if="advisorCount" class="seat__advisors">{{ advisorCount }} 玩家</span>
       <span v-if="team?.hasKey" class="seat__key">KEY</span>
+      <span v-if="team?.offline" class="seat__offline">离线</span>
     </div>
     <span v-if="!player.alive" class="seat__death">出局</span>
   </div>
@@ -75,6 +77,10 @@ defineProps({
 }
 .seat--dead {
   opacity: 0.68;
+}
+.seat--offline {
+  opacity: 0.62;
+  border-color: rgba(190, 90, 75, 0.35);
 }
 .seat--revealed .seat__name {
   color: var(--gold-soft);
@@ -164,6 +170,15 @@ defineProps({
   color: #9ed4c1;
   border: 1px solid rgba(79, 155, 130, 0.25);
   background: rgba(79, 155, 130, 0.08);
+}
+.seat__offline {
+  font-size: 7px;
+  line-height: 13px;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: #e1a49b;
+  border: 1px solid rgba(190, 90, 75, 0.35);
+  background: rgba(190, 90, 75, 0.1);
 }
 .seat__death {
   position: absolute;

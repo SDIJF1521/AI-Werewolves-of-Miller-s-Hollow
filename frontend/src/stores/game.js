@@ -240,8 +240,32 @@ export const useGameStore = defineStore('game', () => {
         if (!data || !room.value) break
         room.value.teams = room.value.teams.map((t) => ({
           ...t,
-          members: t.members.map((m) => (m.id === data.memberId ? { ...m, connected: data.connected } : m)),
+          members: t.members.map((m) =>
+            m.id === data.memberId
+              ? { ...m, connected: data.connected, reconnectDeadline: data.reconnectDeadline }
+              : m,
+          ),
         }))
+        break
+      }
+      case 'member_removed': {
+        const data = payload.data || {}
+        pushFeed({ kind: 'system', text: `${data.name || '玩家'} 超过 60 秒未重连，已移出房间。` })
+        break
+      }
+      case 'ai_offline': {
+        const data = payload.data || {}
+        if (room.value) {
+          room.value.teams = room.value.teams.map((t) =>
+            t.seat === data.seat ? { ...t, offline: true } : t,
+          )
+        }
+        pushFeed({ kind: 'system', text: `${data.seat} 号 AI 已离线：不再调用 API，跳过发言、投票和夜间行动。` })
+        break
+      }
+      case 'speech_skipped': {
+        const data = payload.data || {}
+        pushFeed({ kind: 'system', text: `${data.seat} 号 AI 已离线，跳过发言。` })
         break
       }
       case 'pong':

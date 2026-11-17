@@ -3,7 +3,7 @@
     <div class="voice__head">
       <div class="voice__title">
         <span class="voice__status" :class="{ 'voice__status--live': voice.state.joined }"></span>
-        <span>{{ mode === 'lobby' ? '大厅语音' : mode === 'wolf' ? '狼队语音' : '队内语音' }}</span>
+        <span>{{ mode === 'lobby' ? '大厅语音' : mode === 'wolf' ? '狼队语音' : 'AI 小队语音' }}</span>
         <span v-if="voice.state.joined" class="voice__latency">WebRTC · P2P</span>
       </div>
       <div class="voice__actions">
@@ -28,7 +28,7 @@
     </div>
 
     <div v-if="!allowed" class="voice__hint">
-      {{ mode === 'wolf' ? '狼队语音只在夜间密谈开放。' : '语音只在候场、80 秒密聊和锁票阶段开放。' }}
+      {{ mode === 'wolf' ? '狼队语音只在夜间密谈开放。' : mode === 'team' ? '加入一个 AI 的智囊团后才能开麦。' : '语音只在候场、80 秒密聊和锁票阶段开放。' }}
     </div>
     <div v-else-if="voice.state.joined" class="voice__participants">
       <span class="voice__person voice__person--self" :class="{ 'is-speaking': voice.state.localSpeaking }">
@@ -52,7 +52,7 @@
         ? '候场大厅语音，最多 8 人同时在线。建议戴耳机。'
         : mode === 'wolf'
           ? '狼队语音只在夜间密谈开放，狼人玩家可以语音对齐刀口。'
-          : '低延迟 P2P 语音。建议戴耳机，减少回声。' }}
+          : '同一 AI 的 1–3 名军师可随时连麦，其他 AI 听不到。建议戴耳机。' }}
     </div>
 
     <div v-if="voice.state.error" class="voice__error">{{ voice.state.error }}</div>
