@@ -1,0 +1,13 @@
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import Protocol
+
+
+class RealtimePort(Protocol):
+    """实时推送端口；实现方可以是 WebSocket，未来也可以换成 SSE/消息队列。"""
+
+    async def send(self, room_code: str, member_id: str, payload: dict) -> None: ...
+    async def broadcast(self, room_code: str, payload: dict) -> None: ...
+    async def broadcast_members(self, room_code: str, member_ids: Iterable[str], payload: dict) -> None: ...
+    async def online(self, room_code: str) -> set[str]: ...
